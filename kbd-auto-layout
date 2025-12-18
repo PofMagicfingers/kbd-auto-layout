@@ -1,0 +1,280 @@
+#!/bin/bash
+
+set -e
+
+# ============================================================================
+# USB Keyboard Layout Auto-Configuration
+# ============================================================================
+
+SCRIPT_NAME=$(basename "$0")
+LOCK_FILE="/var/run/${SCRIPT_NAME}.lock"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/kbd-auto-layout"
+CONFIG_FILE="${CONFIG_DIR}/keyboards.yaml"
+SYSTEM_CONFIG="/etc/kbd-auto-layout/keyboards.yaml"
+
+# Tools
+SETXKBMAP=/usr/bin/setxkbmap
+XINPUT=/usr/bin/xinput
+GSETTING=/usr/bin/gsettings
+YQ=/usr/bin/yq
+
+# Defaults
+DEFAULT_LAYOUT="us"
+DEFAULT_VARIANT="intl"
+DEFAULT_MODEL="pc105"
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+error() {
+    log "ERROR: $*" >&2
+}
+
+die() {
+    error "$*"
+    exit 1
+}
+
+check_dependencies() {
+    local missing=()
+    [ ! -x "$SETXKBMAP" ] && missing+=("setxkbmap")
+    [ ! -x "$XINPUT" ] && missing+=("xinput")
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        die "Missing dependencies: ${missing[*]}"
+    fi
+}
+
+get_config_file() {
+    if [ -f "$CONFIG_FILE" ]; then
+        echo "$CONFIG_FILE"
+    elif [ -f "$SYSTEM_CONFIG" ]; then
+        echo "$SYSTEM_CONFIG"
+    else
+        return 1
+    fi
+}
+
+# Parse YAML config using yq or fallback to awk
+parse_yaml_keyboards() {
+    local config="$1"
+
+    if [ -x "$YQ" ]; then
+        $YQ -r '.keyboards[] | "\(.name)|\(.layout // "us")|\(.variant // "intl")|\(.model // "pc105")"' "$config" 2>/dev/null
+    else
+        # Fallback: simple parsing for basic YAML structure
+        awk '
+            /^  - name:/ { name=$3; gsub(/"/, "", name) }
+            /^    layout:/ { layout=$2 }
+            /^    variant:/ { variant=$2 }
+            /^    model:/ { model=$2; print name"|"layout"|"variant"|"model }
+        ' "$config"
+    fi
+}
+
+# ============================================================================
+# Keyboard Detection and Configuration
+# ============================================================================
+
+list_keyboards() {
+    $XINPUT list --short | grep -i keyboard | grep -v "Virtual\|Button\|Power\|Video\|Sleep\|Consumer"
+}
+
+get_keyboard_ids() {
+    local name="$1"
+    $XINPUT list --short | grep -i "$name" | grep -i keyboard | sed -e 's/^.*id=\([0-9]\+\).*/\1/g'
+}
+
+apply_layout() {
+    local device_id="$1"
+    local layout="$2"
+    local variant="$3"
+    local model="$4"
+    local user_home="$5"
+
+    log "Applying layout $layout-$variant ($model) to device $device_id"
+
+    # Apply layout (retry mechanism for reliability)
+    local attempts=3
+    for ((i=1; i<=attempts; i++)); do
+        if $SETXKBMAP -device "$device_id" -layout "$layout" -model "$model" -variant "$variant"; then
+            break
+        fi
+        sleep 0.5
+    done
+
+    # Apply Xmodmap if exists
+    local xmodmap_file="$user_home/.Xmodmap"
+    if [ -f "$xmodmap_file" ]; then
+        xmodmap "$xmodmap_file" 2>/dev/null || true
+    fi
+}
+
+send_notification() {
+    local user="$1"
+    local display="$2"
+    local dbus="$3"
+    local message="$4"
+
+    if [ -x /usr/bin/notify-send ]; then
+        sudo -u "$user" \
+            DISPLAY="$display" \
+            DBUS_SESSION_BUS_ADDRESS="$dbus" \
+            /usr/bin/notify-send "USB Keyboard" "$message" 2>/dev/null || true
+    fi
+}
+
+# ============================================================================
+# Auto Mode (udev triggered)
+# ============================================================================
+
+auto_mode_in() {
+    local config
+    config=$(get_config_file) || {
+        log "No config file found, using defaults"
+        config=""
+    }
+
+    # Get configured keyboards
+    local configured_keyboards=()
+    if [ -n "$config" ]; then
+        while IFS='|' read -r name layout variant model; do
+            configured_keyboards+=("$name|$layout|$variant|$model")
+        done < <(parse_yaml_keyboards "$config")
+    fi
+
+    # Fallback to defaults if no config
+    if [ ${#configured_keyboards[@]} -eq 0 ]; then
+        configured_keyboards=("8BitDo|$DEFAULT_LAYOUT|$DEFAULT_VARIANT|$DEFAULT_MODEL")
+        configured_keyboards+=("Keychron|$DEFAULT_LAYOUT|$DEFAULT_VARIANT|$DEFAULT_MODEL")
+    fi
+
+    # Process each logged-in user
+    local userlist
+    userlist=$(w -h 2>/dev/null | awk '{print $1}' | sort -u)
+
+    for cur_user in $userlist; do
+        local user_home
+        user_home=$(getent passwd "$cur_user" | cut -d: -f6)
+        local xauth="$user_home/.Xauthority"
+        local display=":0"
+
+        [ ! -f "$xauth" ] && continue
+
+        export XAUTHORITY="$xauth"
+        export DISPLAY="$display"
+
+        # Get DBUS session
+        local user_pid dbus_addr
+        user_pid=$(pgrep -u "$cur_user" -x "xinit\|gnome-session\|plasma" 2>/dev/null | head -1)
+        if [ -n "$user_pid" ]; then
+            dbus_addr=$(grep -z DBUS_SESSION_BUS_ADDRESS "/proc/$user_pid/environ" 2>/dev/null | tr '\0' '\n' | head -1)
+            export ${dbus_addr:-DBUS_SESSION_BUS_ADDRESS=}
+        fi
+
+        # Apply layouts for each configured keyboard
+        for kb_config in "${configured_keyboards[@]}"; do
+            IFS='|' read -r kb_name kb_layout kb_variant kb_model <<< "$kb_config"
+
+            local keyboard_ids
+            keyboard_ids=$(get_keyboard_ids "$kb_name")
+
+            if [ -n "$keyboard_ids" ]; then
+                for id in $keyboard_ids; do
+                    apply_layout "$id" "$kb_layout" "$kb_variant" "$kb_model" "$user_home"
+                done
+
+                send_notification "$cur_user" "$display" "$DBUS_SESSION_BUS_ADDRESS" \
+                    "Applied $kb_layout-$kb_variant to $kb_name"
+
+                # Disable GNOME keyboard daemon interference
+                if [ -x "$GSETTING" ]; then
+                    $GSETTING set org.gnome.settings-daemon.plugins.keyboard active false 2>/dev/null || true
+                fi
+
+                log "Configured $kb_name for user $cur_user"
+            fi
+        done
+    done
+}
+
+auto_mode_out() {
+    # Re-enable GNOME keyboard management
+    if [ -x "$GSETTING" ]; then
+        $GSETTING set org.gnome.settings-daemon.plugins.keyboard active true 2>/dev/null || true
+    fi
+    log "Keyboard unplugged, restored GNOME settings"
+}
+
+# ============================================================================
+# Main
+# ============================================================================
+
+usage() {
+    cat << EOF
+Usage: $SCRIPT_NAME [command]
+
+Commands:
+    (none)      Launch interactive configurator
+    reload      Re-apply keyboard layouts (like a fresh plug-in)
+    list        List detected keyboards
+    help        Show this help
+
+Internal (called by udev):
+    in          Apply keyboard layouts
+    out         Restore settings
+
+Configuration:
+    User config:   $CONFIG_FILE
+    System config: $SYSTEM_CONFIG
+
+EOF
+}
+
+main() {
+    # No args = launch GUI configurator or show usage
+    if [ $# -eq 0 ]; then
+        local gui_script
+        gui_script="$(dirname "$(readlink -f "$0")")/kbd-auto-layout-gui"
+        if [ -x "$gui_script" ]; then
+            exec "$gui_script"
+        else
+            usage
+            exit 0
+        fi
+    fi
+
+    check_dependencies
+
+    case "$1" in
+        in|apply|reload)
+            # Use flock for proper locking
+            exec 200>"$LOCK_FILE"
+            flock -n 200 || { log "Another instance running, exiting"; exit 0; }
+
+            sleep 1  # Wait for device to fully initialize
+            auto_mode_in
+            ;;
+        out)
+            auto_mode_out
+            ;;
+        list|--list|-l)
+            echo "Detected keyboards:"
+            list_keyboards
+            ;;
+        help|--help|-h)
+            usage
+            ;;
+        *)
+            usage
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

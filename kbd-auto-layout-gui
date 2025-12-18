@@ -1,0 +1,170 @@
+#!/bin/bash
+
+set -e
+
+# ============================================================================
+# USB Keyboard Layout - Interactive GUI Configuration
+# Requires: gum (https://github.com/charmbracelet/gum)
+# ============================================================================
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/kbd-auto-layout"
+CONFIG_FILE="${CONFIG_DIR}/keyboards.yaml"
+SETXKBMAP=/usr/bin/setxkbmap
+XINPUT=/usr/bin/xinput
+GUM=/usr/bin/gum
+YQ=/usr/bin/yq
+
+DEFAULT_MODEL="pc105"
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+list_keyboards() {
+    $XINPUT list --short | grep -i keyboard | grep -v "Virtual\|Button\|Power\|Video\|Sleep\|Consumer"
+}
+
+apply_layout() {
+    local device_id="$1"
+    local layout="$2"
+    local variant="$3"
+    local model="$4"
+
+    local attempts=3
+    for ((i=1; i<=attempts; i++)); do
+        if $SETXKBMAP -device "$device_id" -layout "$layout" -model "$model" -variant "$variant"; then
+            break
+        fi
+        sleep 0.5
+    done
+
+    # Apply Xmodmap if exists
+    if [ -f "$HOME/.Xmodmap" ]; then
+        xmodmap "$HOME/.Xmodmap" 2>/dev/null || true
+    fi
+}
+
+save_keyboard_config() {
+    local name="$1"
+    local layout="$2"
+    local variant="$3"
+    local model="$4"
+
+    mkdir -p "$CONFIG_DIR"
+
+    if [ ! -f "$CONFIG_FILE" ]; then
+        cat > "$CONFIG_FILE" << EOF
+# USB Keyboard Layout Configuration
+defaults:
+  layout: us
+  variant: intl
+  model: pc105
+
+keyboards: []
+
+notifications:
+  enabled: true
+
+xmodmap:
+  enabled: true
+  file: ".Xmodmap"
+EOF
+    fi
+
+    if [ -x "$YQ" ]; then
+        $YQ -i ".keyboards += [{\"name\": \"$name\", \"layout\": \"$layout\", \"variant\": \"$variant\", \"model\": \"$model\"}]" "$CONFIG_FILE"
+    else
+        sed -i "s/^keyboards: \[\]/keyboards:/" "$CONFIG_FILE"
+        cat >> "$CONFIG_FILE" << EOF
+
+  - name: "$name"
+    layout: $layout
+    variant: $variant
+    model: $model
+EOF
+    fi
+}
+
+simple_mode() {
+    echo "=== USB Keyboard Layout Configuration ==="
+    echo ""
+    echo "Available keyboards:"
+    list_keyboards | nl
+    echo ""
+    echo "This mode requires 'gum' for the full interactive experience."
+    echo "Install it with: pacman -S gum"
+}
+
+# ============================================================================
+# Interactive Mode
+# ============================================================================
+
+interactive_mode() {
+    if [ ! -x "$GUM" ]; then
+        echo "Error: gum is not installed. Install it with: pacman -S gum" >&2
+        simple_mode
+        return 1
+    fi
+
+    local keyboards
+    keyboards=$(list_keyboards)
+
+    if [ -z "$keyboards" ]; then
+        gum style --foreground 196 "No keyboards detected!"
+        return 1
+    fi
+
+    gum style \
+        --border normal \
+        --margin "1" \
+        --padding "1" \
+        --border-foreground 212 \
+        "USB Keyboard Layout Configuration"
+
+    echo ""
+    gum style --foreground 39 "Select a keyboard:"
+    local selected_keyboard
+    selected_keyboard=$(echo "$keyboards" | gum choose --height 10)
+
+    if [ -z "$selected_keyboard" ]; then
+        return 1
+    fi
+
+    local kb_id
+    kb_id=$(echo "$selected_keyboard" | sed -e 's/^.*id=\([0-9]\+\).*/\1/g')
+    local kb_name
+    kb_name=$(echo "$selected_keyboard" | sed -e 's/\s*id=.*//')
+
+    echo ""
+    gum style --foreground 39 "Select a layout:"
+    local layouts=("us - English (US)" "us intl - English (US, International)" "fr - French" "fr azerty - French (AZERTY)" "de - German" "es - Spanish" "it - Italian" "pt - Portuguese" "ru - Russian" "jp - Japanese" "kr - Korean" "cn - Chinese")
+    local selected_layout
+    selected_layout=$(printf '%s\n' "${layouts[@]}" | gum choose --height 12)
+
+    if [ -z "$selected_layout" ]; then
+        return 1
+    fi
+
+    local layout variant
+    layout=$(echo "$selected_layout" | awk '{print $1}')
+    variant=$(echo "$selected_layout" | awk '{print $2}')
+    [ "$variant" = "-" ] && variant=""
+
+    echo ""
+    if gum confirm "Apply $layout ${variant:+($variant)} to $kb_name?"; then
+        apply_layout "$kb_id" "$layout" "${variant:-basic}" "$DEFAULT_MODEL"
+        gum style --foreground 46 "Layout applied successfully!"
+
+        echo ""
+        if gum confirm "Save this configuration for future use?"; then
+            save_keyboard_config "$kb_name" "$layout" "${variant:-basic}" "$DEFAULT_MODEL"
+            gum style --foreground 46 "Configuration saved to $CONFIG_FILE"
+        fi
+    fi
+}
+
+# ============================================================================
+# Main
+# ============================================================================
+
+interactive_mode

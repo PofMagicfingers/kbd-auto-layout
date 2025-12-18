@@ -1,0 +1,38 @@
+# USB Keyboard Layout Configuration
+# This file defines keyboard-specific layouts applied when USB keyboards are connected
+
+# Default settings applied to all keyboards unless overridden
+defaults:
+  layout: us
+  variant: intl
+  model: pc105
+
+# Keyboard definitions
+# Each entry matches keyboards by name (substring match against xinput output)
+keyboards:
+  - name: "8BitDo"
+    layout: us
+    variant: intl
+    model: pc105
+
+  - name: "Keychron"
+    layout: us
+    variant: intl
+    model: pc105
+
+  # Example: French AZERTY keyboard
+  # - name: "Logitech"
+  #   layout: fr
+  #   variant: azerty
+  #   model: pc105
+
+# Notification settings
+notifications:
+  enabled: true
+  on_connect: true
+  on_disconnect: false
+
+# Apply Xmodmap if present in user home directory
+xmodmap:
+  enabled: true
+  file: ".Xmodmap"

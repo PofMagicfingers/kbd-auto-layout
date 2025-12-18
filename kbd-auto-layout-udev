@@ -1,0 +1,23 @@
+#!/bin/sh
+# USB Keyboard udev wrapper
+# Called by udev rules, logs output and invokes main script
+
+LOG=/var/log/kbd-auto-layout.log
+SCRIPT=/usr/local/bin/kbd-auto-layout
+
+# Small delay to let device fully initialize
+sleep 0.5
+
+# Log the event
+{
+    echo ""
+    date "+[%Y-%m-%d %H:%M:%S] udev event: $*"
+    echo "SUBSYSTEM=$SUBSYSTEM ACTION=$ACTION KERNEL=$KERNEL"
+} >> "$LOG"
+
+# Run the main script
+if [ -x "$SCRIPT" ]; then
+    "$SCRIPT" "$@" >> "$LOG" 2>&1
+else
+    echo "Error: $SCRIPT not found or not executable" >> "$LOG"
+fi
