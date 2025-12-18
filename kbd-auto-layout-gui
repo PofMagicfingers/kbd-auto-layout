@@ -20,8 +20,46 @@ DEFAULT_MODEL="pc105"
 # Helper Functions
 # ============================================================================
 
-list_keyboards() {
+list_keyboards_raw() {
     $XINPUT list --short | grep -i keyboard | grep -v "Virtual\|Button\|Power\|Video\|Sleep\|Consumer"
+}
+
+# Clean keyboard name: remove leading symbols and everything after tab
+clean_kb_name() {
+    echo "$1" | sed -e 's/^[^a-zA-Z0-9]*//' -e 's/\t.*//' -e 's/[[:space:]]*$//'
+}
+
+# Extract keyboard ID from raw xinput line
+extract_kb_id() {
+    echo "$1" | sed -e 's/^.*id=\([0-9]\+\).*/\1/'
+}
+
+# Get configured layout for a keyboard name (partial match)
+get_kb_config() {
+    local name="$1"
+    if [ -x "$YQ" ] && [ -f "$CONFIG_FILE" ]; then
+        $YQ -r '.keyboards[] | "\(.name)|\(.layout)|\(.variant // "")"' "$CONFIG_FILE" 2>/dev/null | while IFS='|' read -r cfg_name layout variant; do
+            if [[ "$name" == *"$cfg_name"* ]]; then
+                echo "$layout${variant:+ $variant}"
+                return
+            fi
+        done
+    fi
+}
+
+# List keyboards with their config status
+list_keyboards() {
+    while IFS= read -r line; do
+        local name id config
+        name=$(clean_kb_name "$line")
+        id=$(extract_kb_id "$line")
+        config=$(get_kb_config "$name")
+        if [ -n "$config" ]; then
+            printf "%s [%s] (id=%s)\n" "$name" "$config" "$id"
+        else
+            printf "%s (id=%s)\n" "$name" "$id"
+        fi
+    done < <(list_keyboards_raw)
 }
 
 apply_layout() {
@@ -72,7 +110,8 @@ EOF
     fi
 
     if [ -x "$YQ" ]; then
-        $YQ -i ".keyboards += [{\"name\": \"$name\", \"layout\": \"$layout\", \"variant\": \"$variant\", \"model\": \"$model\"}]" "$CONFIG_FILE"
+        # Use -y for YAML output (required by Python yq wrapper)
+        $YQ -y -i ".keyboards += [{\"name\": \"$name\", \"layout\": \"$layout\", \"variant\": \"$variant\", \"model\": \"$model\"}]" "$CONFIG_FILE"
     else
         sed -i "s/^keyboards: \[\]/keyboards:/" "$CONFIG_FILE"
         cat >> "$CONFIG_FILE" << EOF
@@ -82,6 +121,21 @@ EOF
     variant: $variant
     model: $model
 EOF
+    fi
+}
+
+# List configured keyboards
+list_configured_keyboards() {
+    if [ -x "$YQ" ] && [ -f "$CONFIG_FILE" ]; then
+        $YQ -r '.keyboards[] | "\(.name) [\(.layout) \(.variant // "")]"' "$CONFIG_FILE" 2>/dev/null
+    fi
+}
+
+# Remove a keyboard from config by name
+remove_keyboard_config() {
+    local name="$1"
+    if [ -x "$YQ" ] && [ -f "$CONFIG_FILE" ]; then
+        $YQ -y -i ".keyboards |= map(select(.name != \"$name\"))" "$CONFIG_FILE"
     fi
 }
 
@@ -99,13 +153,7 @@ simple_mode() {
 # Interactive Mode
 # ============================================================================
 
-interactive_mode() {
-    if [ ! -x "$GUM" ]; then
-        echo "Error: gum is not installed. Install it with: pacman -S gum" >&2
-        simple_mode
-        return 1
-    fi
-
+configure_keyboard() {
     local keyboards
     keyboards=$(list_keyboards)
 
@@ -113,13 +161,6 @@ interactive_mode() {
         gum style --foreground 196 "No keyboards detected!"
         return 1
     fi
-
-    gum style \
-        --border normal \
-        --margin "1" \
-        --padding "1" \
-        --border-foreground 212 \
-        "USB Keyboard Layout Configuration"
 
     echo ""
     gum style --foreground 39 "Select a keyboard:"
@@ -131,9 +172,9 @@ interactive_mode() {
     fi
 
     local kb_id
-    kb_id=$(echo "$selected_keyboard" | sed -e 's/^.*id=\([0-9]\+\).*/\1/g')
+    kb_id=$(echo "$selected_keyboard" | sed -e 's/^.*(id=\([0-9]\+\)).*/\1/')
     local kb_name
-    kb_name=$(echo "$selected_keyboard" | sed -e 's/\s*id=.*//')
+    kb_name=$(echo "$selected_keyboard" | sed -e 's/ \[.*$//' -e 's/ (id=.*//')
 
     echo ""
     gum style --foreground 39 "Select a layout:"
@@ -157,10 +198,77 @@ interactive_mode() {
 
         echo ""
         if gum confirm "Save this configuration for future use?"; then
-            save_keyboard_config "$kb_name" "$layout" "${variant:-basic}" "$DEFAULT_MODEL"
-            gum style --foreground 46 "Configuration saved to $CONFIG_FILE"
+            echo ""
+            gum style --foreground 39 "Enter the match pattern for this keyboard:"
+            gum style --foreground 245 "(This pattern will match any keyboard containing this text)"
+            local match_pattern
+            match_pattern=$(gum input --value "$kb_name" --width 60)
+            if [ -n "$match_pattern" ]; then
+                save_keyboard_config "$match_pattern" "$layout" "${variant:-basic}" "$DEFAULT_MODEL"
+                gum style --foreground 46 "Configuration saved to $CONFIG_FILE"
+            fi
         fi
     fi
+}
+
+remove_config_interactive() {
+    local configs
+    configs=$(list_configured_keyboards)
+
+    if [ -z "$configs" ]; then
+        gum style --foreground 196 "No keyboards configured!"
+        return 1
+    fi
+
+    echo ""
+    gum style --foreground 39 "Select a configuration to remove:"
+    local selected
+    selected=$(echo "$configs" | gum choose --height 10)
+
+    if [ -z "$selected" ]; then
+        return 1
+    fi
+
+    # Extract name (everything before the first [)
+    local cfg_name
+    cfg_name=$(echo "$selected" | sed 's/ \[.*//')
+
+    echo ""
+    if gum confirm "Remove configuration for '$cfg_name'?"; then
+        remove_keyboard_config "$cfg_name"
+        gum style --foreground 46 "Configuration removed!"
+    fi
+}
+
+interactive_mode() {
+    if [ ! -x "$GUM" ]; then
+        echo "Error: gum is not installed. Install it with: pacman -S gum" >&2
+        simple_mode
+        return 1
+    fi
+
+    gum style \
+        --border normal \
+        --margin "1" \
+        --padding "1" \
+        --border-foreground 212 \
+        "USB Keyboard Layout Configuration"
+
+    echo ""
+    local action
+    action=$(gum choose "Configure keyboard" "Remove configuration" "Exit")
+
+    case "$action" in
+        "Configure keyboard")
+            configure_keyboard
+            ;;
+        "Remove configuration")
+            remove_config_interactive
+            ;;
+        *)
+            return 0
+            ;;
+    esac
 }
 
 # ============================================================================
