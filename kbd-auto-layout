@@ -109,13 +109,25 @@ apply_layout() {
     local prefix=""
     $DRY_RUN && prefix="[DRY RUN] "
 
+    # Check if layout seems already correct (for notification purposes only)
+    local current
+    current=$($SETXKBMAP -device "$device_id" -query 2>/dev/null)
+    local current_layout=$(echo "$current" | grep "^layout:" | awk '{print $2}')
+    local current_variant=$(echo "$current" | grep "^variant:" | awk '{print $2}')
+
+    local was_correct=false
+    if [ "$current_layout" = "$layout" ] && [ "$current_variant" = "$variant" ]; then
+        was_correct=true
+    fi
+
     log "${prefix}Applying layout $layout-$variant ($model) to device $device_id"
 
     if $DRY_RUN; then
-        return 0
+        # Return 1 if was already correct (no notification needed)
+        $was_correct && return 1 || return 0
     fi
 
-    # Apply layout (retry mechanism for reliability)
+    # Always apply layout (query can lie)
     local attempts=3
     for ((i=1; i<=attempts; i++)); do
         if $SETXKBMAP -device "$device_id" -layout "$layout" -model "$model" -variant "$variant"; then
@@ -129,6 +141,9 @@ apply_layout() {
     if [ -f "$xmodmap_file" ]; then
         xmodmap "$xmodmap_file" 2>/dev/null || true
     fi
+
+    # Return 1 if was already correct (no notification needed)
+    $was_correct && return 1 || return 0
 }
 
 send_notification() {
@@ -204,12 +219,18 @@ auto_mode_in() {
             keyboard_ids=$(get_keyboard_ids "$kb_name")
 
             if [ -n "$keyboard_ids" ]; then
+                local layout_changed=false
                 for id in $keyboard_ids; do
-                    apply_layout "$id" "$kb_layout" "$kb_variant" "$kb_model" "$user_home"
+                    if apply_layout "$id" "$kb_layout" "$kb_variant" "$kb_model" "$user_home"; then
+                        layout_changed=true
+                    fi
                 done
 
-                send_notification "$cur_user" "$display" "$DBUS_SESSION_BUS_ADDRESS" \
-                    "Applied $kb_layout-$kb_variant to $kb_name"
+                # Only notify if layout was actually changed
+                if $layout_changed; then
+                    send_notification "$cur_user" "$display" "$DBUS_SESSION_BUS_ADDRESS" \
+                        "Applied $kb_layout-$kb_variant to $kb_name"
+                fi
 
                 # Disable GNOME keyboard daemon interference
                 if [ -x "$GSETTING" ]; then
@@ -295,6 +316,14 @@ main() {
 
             sleep 1  # Wait for device to fully initialize
             auto_mode_in
+
+            # If called by udev, wait and reapply if X11 reset layouts
+            if [ ! -t 0 ]; then
+                sleep 5
+                log "Checking layouts after X11 settle..."
+                auto_mode_in
+            fi
+
             log "========== ${prefix}SESSION END =========="
             ;;
         list|--list|-l)

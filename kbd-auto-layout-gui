@@ -110,8 +110,17 @@ EOF
     fi
 
     if [ -x "$YQ" ]; then
-        # Use -y for YAML output (required by Python yq wrapper)
-        $YQ -y -i ".keyboards += [{\"name\": \"$name\", \"layout\": \"$layout\", \"variant\": \"$variant\", \"model\": \"$model\"}]" "$CONFIG_FILE"
+        # Check if keyboard already exists
+        local exists
+        exists=$($YQ -r ".keyboards[] | select(.name == \"$name\") | .name" "$CONFIG_FILE" 2>/dev/null)
+
+        if [ -n "$exists" ]; then
+            # Update existing entry
+            $YQ -y -i "(.keyboards[] | select(.name == \"$name\")) |= {\"name\": \"$name\", \"layout\": \"$layout\", \"variant\": \"$variant\", \"model\": \"$model\"}" "$CONFIG_FILE"
+        else
+            # Add new entry
+            $YQ -y -i ".keyboards += [{\"name\": \"$name\", \"layout\": \"$layout\", \"variant\": \"$variant\", \"model\": \"$model\"}]" "$CONFIG_FILE"
+        fi
     else
         sed -i "s/^keyboards: \[\]/keyboards:/" "$CONFIG_FILE"
         cat >> "$CONFIG_FILE" << EOF
