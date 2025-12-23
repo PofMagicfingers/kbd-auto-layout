@@ -131,7 +131,7 @@ send_notification() {
         sudo -u "$user" \
             DISPLAY="$display" \
             DBUS_SESSION_BUS_ADDRESS="$dbus" \
-            /usr/bin/notify-send "USB Keyboard" "$message" 2>/dev/null || true
+            /usr/bin/notify-send "⌨️ kbd-auto-layout" "$message" 2>/dev/null || true
     fi
 }
 

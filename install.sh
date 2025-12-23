@@ -80,11 +80,45 @@ install_autostart() {
     local real_home
     real_home=$(getent passwd "$real_user" | cut -d: -f6)
     local autostart_dir="$real_home/.config/autostart"
+    local desktop_file="$autostart_dir/kbd-auto-layout.desktop"
+    local source_file="$SCRIPT_DIR/autostart/kbd-auto-layout.desktop"
 
-    info "Installing autostart entry for $real_user..."
+    # Already installed?
+    if [ -f "$desktop_file" ]; then
+        if diff -q "$source_file" "$desktop_file" > /dev/null 2>&1; then
+            info "XDG autostart already installed"
+            return 0
+        fi
+    fi
+
+    info "Installing XDG autostart entry for $real_user..."
 
     sudo -u "$real_user" mkdir -p "$autostart_dir"
-    install -m 644 -o "$real_user" "$SCRIPT_DIR/autostart/kbd-auto-layout.desktop" "$autostart_dir/"
+
+    # Show diff
+    echo ""
+    echo "Proposed file: $desktop_file"
+    echo ""
+    if [ -f "$desktop_file" ]; then
+        if command -v git &> /dev/null; then
+            git diff --no-index "$desktop_file" "$source_file" || true
+        else
+            diff -u --color=always "$desktop_file" "$source_file" || true
+        fi
+    else
+        echo -e "\033[32m$(cat "$source_file")\033[0m"
+    fi
+    echo ""
+
+    # Ask for confirmation
+    read -p "Install this autostart entry? [y/N] " -n 1 -r
+    echo ""
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        install -m 644 -o "$real_user" "$source_file" "$desktop_file"
+        info "XDG autostart installed"
+    else
+        warn "Skipped XDG autostart"
+    fi
 }
 
 setup_i3_autostart() {
@@ -115,20 +149,21 @@ setup_i3_autostart() {
     read -r -d '' insert_block <<'EOF' || true
 
 # Autostart kbd-auto-layout
-exec --no-startup-id kbd-auto-layout reload
+exec_always --no-startup-id kbd-auto-layout reload
 EOF
 
     # Create modified version
     local tmp_file
     tmp_file=$(mktemp)
 
-    if grep -q "exec --no-startup-id" "$i3_config"; then
-        # Insert after last exec --no-startup-id
-        local last_line
-        last_line=$(grep -n "exec --no-startup-id" "$i3_config" | tail -1 | cut -d: -f1)
-        head -n "$last_line" "$i3_config" > "$tmp_file"
+    if grep -vE "^\s*#" "$i3_config" | grep -qE "exec_always --no-startup-id"; then
+        # Insert before first non-commented exec_always --no-startup-id
+        local first_line
+        first_line=$(grep -nE "exec_always --no-startup-id" "$i3_config" | grep -vE "^[0-9]+:\s*#" | head -1 | cut -d: -f1)
+        head -n "$((first_line - 1))" "$i3_config" > "$tmp_file"
         echo "$insert_block" >> "$tmp_file"
-        tail -n +"$((last_line + 1))" "$i3_config" >> "$tmp_file"
+        echo "" >> "$tmp_file"
+        tail -n +"$first_line" "$i3_config" >> "$tmp_file"
     else
         # Append at end
         cat "$i3_config" > "$tmp_file"
@@ -150,7 +185,8 @@ EOF
     read -p "Apply these changes? [y/N] " -n 1 -r
     echo ""
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        sudo -u "$real_user" cp "$tmp_file" "$i3_config"
+        cp "$tmp_file" "$i3_config"
+        chown "$real_user":"$real_user" "$i3_config"
         info "i3 autostart configured"
     else
         warn "Skipped i3 configuration"
@@ -167,10 +203,15 @@ setup_log() {
 }
 
 reload_udev() {
+    local real_user="${SUDO_USER:-$USER}"
+
     info "Reloading udev rules..."
 
     udevadm control --reload-rules
     udevadm trigger
+
+    # Reapply layouts after udev trigger (as user for notifications)
+    sudo -u "$real_user" "$INSTALL_DIR/kbd-auto-layout" reload 2>/dev/null || true
 }
 
 show_summary() {
