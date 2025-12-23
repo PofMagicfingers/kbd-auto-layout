@@ -87,6 +87,78 @@ install_autostart() {
     install -m 644 -o "$real_user" "$SCRIPT_DIR/autostart/kbd-auto-layout.desktop" "$autostart_dir/"
 }
 
+setup_i3_autostart() {
+    local real_user="${SUDO_USER:-$USER}"
+    local real_home
+    real_home=$(getent passwd "$real_user" | cut -d: -f6)
+
+    # Find i3 config file
+    local i3_config=""
+    if [ -f "$real_home/.config/i3/config" ]; then
+        i3_config="$real_home/.config/i3/config"
+    elif [ -f "$real_home/.i3/config" ]; then
+        i3_config="$real_home/.i3/config"
+    else
+        return 0
+    fi
+
+    # Already configured?
+    if grep -q "kbd-auto-layout" "$i3_config"; then
+        info "i3 autostart already configured"
+        return 0
+    fi
+
+    info "Found i3 config at $i3_config"
+
+    # Block to insert
+    local insert_block
+    read -r -d '' insert_block <<'EOF' || true
+
+# Autostart kbd-auto-layout
+exec --no-startup-id kbd-auto-layout reload
+EOF
+
+    # Create modified version
+    local tmp_file
+    tmp_file=$(mktemp)
+
+    if grep -q "exec --no-startup-id" "$i3_config"; then
+        # Insert after last exec --no-startup-id
+        local last_line
+        last_line=$(grep -n "exec --no-startup-id" "$i3_config" | tail -1 | cut -d: -f1)
+        head -n "$last_line" "$i3_config" > "$tmp_file"
+        echo "$insert_block" >> "$tmp_file"
+        tail -n +"$((last_line + 1))" "$i3_config" >> "$tmp_file"
+    else
+        # Append at end
+        cat "$i3_config" > "$tmp_file"
+        echo "$insert_block" >> "$tmp_file"
+    fi
+
+    # Show diff
+    echo ""
+    echo "Proposed changes to $i3_config:"
+    echo ""
+    if command -v git &> /dev/null; then
+        git diff --no-index "$i3_config" "$tmp_file" || true
+    else
+        diff -u --color=always "$i3_config" "$tmp_file" || true
+    fi
+    echo ""
+
+    # Ask for confirmation
+    read -p "Apply these changes? [y/N] " -n 1 -r
+    echo ""
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        sudo -u "$real_user" cp "$tmp_file" "$i3_config"
+        info "i3 autostart configured"
+    else
+        warn "Skipped i3 configuration"
+    fi
+
+    rm -f "$tmp_file"
+}
+
 setup_log() {
     info "Setting up log file..."
 
@@ -121,9 +193,6 @@ show_summary() {
     echo "  kbd-auto-layout list     # List detected keyboards"
     echo "  kbd-auto-layout reload   # Apply layouts now"
     echo ""
-    warn "For i3wm, add to ~/.config/i3/config:"
-    echo "  exec --no-startup-id kbd-auto-layout reload"
-    echo ""
 }
 
 main() {
@@ -138,6 +207,7 @@ main() {
     install_config
     setup_user_config
     install_autostart
+    setup_i3_autostart
     setup_log
     reload_udev
 
