@@ -28,6 +28,9 @@ DEFAULT_LAYOUT="us"
 DEFAULT_VARIANT="intl"
 DEFAULT_MODEL="pc105"
 
+# Flags
+DRY_RUN=false
+
 # ============================================================================
 # Helper Functions
 # ============================================================================
@@ -103,7 +106,14 @@ apply_layout() {
     local model="$4"
     local user_home="$5"
 
-    log "Applying layout $layout-$variant ($model) to device $device_id"
+    local prefix=""
+    $DRY_RUN && prefix="[DRY RUN] "
+
+    log "${prefix}Applying layout $layout-$variant ($model) to device $device_id"
+
+    if $DRY_RUN; then
+        return 0
+    fi
 
     # Apply layout (retry mechanism for reliability)
     local attempts=3
@@ -127,11 +137,14 @@ send_notification() {
     local dbus="$3"
     local message="$4"
 
+    local title="⌨️ kbd-auto-layout"
+    $DRY_RUN && title="[DRY RUN] $title"
+
     if [ -x /usr/bin/notify-send ]; then
         sudo -u "$user" \
             DISPLAY="$display" \
             DBUS_SESSION_BUS_ADDRESS="$dbus" \
-            /usr/bin/notify-send "⌨️ kbd-auto-layout" "$message" 2>/dev/null || true
+            /usr/bin/notify-send "$title" "$message" 2>/dev/null || true
     fi
 }
 
@@ -219,10 +232,14 @@ usage() {
 Usage: $SCRIPT_NAME [command]
 
 Commands:
-    (none)      Launch interactive configurator
+    (none)      Apply layouts, then launch interactive configurator
+    --no-apply  Launch configurator without applying layouts
     reload      Re-apply keyboard layouts (like a fresh plug-in)
     list        List detected keyboards
     help        Show this help
+
+Options:
+    -n, --dry-run   Show what would be done without applying
 
 Internal (called by udev):
     in          Apply keyboard layouts
@@ -237,12 +254,14 @@ EOF
 main() {
     check_dependencies
 
-    # No args = apply layouts in background + launch GUI or show usage
-    if [ $# -eq 0 ]; then
-        # Apply layouts in background
-        "$0" reload &
+    # No args or --no-apply = show GUI or usage (with optional apply)
+    if [ $# -eq 0 ] || [ "$1" = "--no-apply" ]; then
+        # Apply layouts first (unless --no-apply)
+        if [ "$1" != "--no-apply" ]; then
+            "$0" reload
+        fi
 
-        # Launch GUI if available, otherwise show usage
+        # Then launch GUI if available, otherwise show usage
         local gui_script
         gui_script="$(dirname "$(readlink -f "$0")")/kbd-auto-layout-gui"
         if [ -x "$gui_script" ]; then
@@ -252,10 +271,18 @@ main() {
         exit 0
     fi
 
+    # Parse --dry-run / -n flag
+    if [ "$1" = "--dry-run" ] || [ "$1" = "-n" ]; then
+        DRY_RUN=true
+        shift
+    fi
+
     case "$1" in
         in|apply|reload)
             # Log session header
-            log "========== SESSION START =========="
+            local prefix=""
+            $DRY_RUN && prefix="[DRY RUN] "
+            log "========== ${prefix}SESSION START =========="
             if [ -t 0 ]; then
                 log "Source: terminal (command: $1)"
             else
@@ -268,7 +295,7 @@ main() {
 
             sleep 1  # Wait for device to fully initialize
             auto_mode_in
-            log "========== SESSION END =========="
+            log "========== ${prefix}SESSION END =========="
             ;;
         list|--list|-l)
             echo "Detected keyboards:"
