@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=USB Keyboard Layout
+Comment=Apply keyboard layouts at session start
+Exec=/usr/local/bin/kbd-auto-layout reload
+X-GNOME-Autostart-Phase=Applications
+X-GNOME-Autostart-Delay=2
+StartupNotify=false
+NoDisplay=true

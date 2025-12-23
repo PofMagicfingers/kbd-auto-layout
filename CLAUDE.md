@@ -13,6 +13,8 @@ kbd-auto-layout/
 ├── kbd-auto-layout          # Main script - layout detection & application
 ├── kbd-auto-layout-udev     # Wrapper called by udev, handles logging
 ├── kbd-auto-layout-gui      # Interactive configurator (requires gum)
+├── autostart/
+│   └── kbd-auto-layout.desktop  # XDG autostart entry (GNOME/KDE/XFCE)
 ├── config/
 │   └── keyboards.yaml    # Default keyboard configuration
 ├── udev/
@@ -74,3 +76,13 @@ This installs:
 - udev rules to `/etc/udev/rules.d/`
 - System config to `/etc/kbd-auto-layout/`
 - User config to `~/.config/kbd-auto-layout/`
+- Autostart entry to `~/.config/autostart/` (for GNOME/KDE/XFCE)
+
+## Autostart at Boot
+
+The XDG autostart entry works with GNOME, KDE, and XFCE.
+
+For **i3wm**, add to `~/.config/i3/config`:
+```
+exec --no-startup-id kbd-auto-layout reload
+```

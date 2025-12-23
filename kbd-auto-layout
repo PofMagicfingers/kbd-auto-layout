@@ -7,7 +7,12 @@ set -e
 # ============================================================================
 
 SCRIPT_NAME=$(basename "$0")
-LOCK_FILE="/var/run/${SCRIPT_NAME}.lock"
+# Use /var/run for root (udev), XDG_RUNTIME_DIR or /tmp for users
+if [ "$EUID" -eq 0 ]; then
+    LOCK_FILE="/var/run/${SCRIPT_NAME}.lock"
+else
+    LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/${SCRIPT_NAME}.lock"
+fi
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/kbd-auto-layout"
 CONFIG_FILE="${CONFIG_DIR}/keyboards.yaml"
 SYSTEM_CONFIG="/etc/kbd-auto-layout/keyboards.yaml"
@@ -87,7 +92,8 @@ list_keyboards() {
 
 get_keyboard_ids() {
     local name="$1"
-    $XINPUT list --short | grep -i "$name" | grep -i keyboard | sed -e 's/^.*id=\([0-9]\+\).*/\1/g'
+    # Only match actual keyboard devices (slave keyboard), not pointer devices
+    $XINPUT list | grep -i "$name" | grep "slave  keyboard" | sed -e 's/^.*id=\([0-9]\+\).*/\1/g'
 }
 
 apply_layout() {

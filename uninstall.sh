@@ -51,6 +51,18 @@ remove_log() {
     rm -f "$LOG_FILE"
 }
 
+remove_autostart() {
+    local real_user="${SUDO_USER:-$USER}"
+    local real_home
+    real_home=$(getent passwd "$real_user" | cut -d: -f6)
+    local autostart_file="$real_home/.config/autostart/kbd-auto-layout.desktop"
+
+    if [ -f "$autostart_file" ]; then
+        info "Removing autostart entry..."
+        rm -f "$autostart_file"
+    fi
+}
+
 reload_udev() {
     info "Reloading udev rules..."
 
@@ -67,6 +79,7 @@ main() {
     remove_scripts
     remove_udev_rules
     remove_system_config
+    remove_autostart
     remove_log
     reload_udev
 

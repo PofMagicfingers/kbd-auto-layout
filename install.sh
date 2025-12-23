@@ -75,6 +75,18 @@ setup_user_config() {
     fi
 }
 
+install_autostart() {
+    local real_user="${SUDO_USER:-$USER}"
+    local real_home
+    real_home=$(getent passwd "$real_user" | cut -d: -f6)
+    local autostart_dir="$real_home/.config/autostart"
+
+    info "Installing autostart entry for $real_user..."
+
+    sudo -u "$real_user" mkdir -p "$autostart_dir"
+    install -m 644 -o "$real_user" "$SCRIPT_DIR/autostart/kbd-auto-layout.desktop" "$autostart_dir/"
+}
+
 setup_log() {
     info "Setting up log file..."
 
@@ -99,6 +111,7 @@ show_summary() {
     [ -f "$INSTALL_DIR/kbd-auto-layout-gui" ] && echo "  - $INSTALL_DIR/kbd-auto-layout-gui"
     echo "  - $UDEV_DIR/99-kbd-auto-layout.rules"
     echo "  - $SYSTEM_CONFIG_DIR/keyboards.yaml"
+    echo "  - ~/.config/autostart/kbd-auto-layout.desktop"
     echo ""
     echo "User config: ~/.config/kbd-auto-layout/keyboards.yaml"
     echo "Log file: $LOG_FILE"
@@ -106,7 +119,10 @@ show_summary() {
     echo "Usage:"
     echo "  kbd-auto-layout          # Launch configurator (if gui installed)"
     echo "  kbd-auto-layout list     # List detected keyboards"
-    echo "  kbd-auto-layout apply    # Apply layouts now"
+    echo "  kbd-auto-layout reload   # Apply layouts now"
+    echo ""
+    warn "For i3wm, add to ~/.config/i3/config:"
+    echo "  exec --no-startup-id kbd-auto-layout reload"
     echo ""
 }
 
@@ -121,6 +137,7 @@ main() {
     install_udev_rules
     install_config
     setup_user_config
+    install_autostart
     setup_log
     reload_udev
 

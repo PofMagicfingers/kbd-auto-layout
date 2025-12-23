@@ -93,6 +93,15 @@ sudo ./uninstall.sh
 
 Vos configurations personnelles dans `~/.config/kbd-auto-layout/` ne sont pas supprimées.
 
+## Démarrage automatique
+
+L'installation ajoute un fichier autostart pour GNOME, KDE et XFCE.
+
+**Pour i3wm**, ajoutez dans `~/.config/i3/config` :
+```
+exec --no-startup-id kbd-auto-layout reload
+```
+
 ## Prérequis
 
 - Linux avec X11 (pas encore compatible Wayland)
