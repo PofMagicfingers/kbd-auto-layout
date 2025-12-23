@@ -1,13 +1,9 @@
 # USB Keyboard Layout Auto-Configuration
-# Triggers on USB keyboard plug/unplug and HID module reload (DKMS)
+# Triggers on USB keyboard plug and HID module reload (DKMS)
 
 # USB Keyboard connected
 ACTION=="add", SUBSYSTEM=="input", ENV{ID_INPUT_KEYBOARD}=="1", \
     RUN+="/usr/local/bin/kbd-auto-layout-udev in"
-
-# USB Keyboard disconnected
-ACTION=="remove", SUBSYSTEM=="input", ENV{ID_INPUT_KEYBOARD}=="1", \
-    RUN+="/usr/local/bin/kbd-auto-layout-udev out"
 
 # HID module loaded (after DKMS rebuild or kernel update)
 # This ensures layouts are reapplied when keyboard drivers are reloaded

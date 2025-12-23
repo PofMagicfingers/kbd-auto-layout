@@ -209,13 +209,6 @@ auto_mode_in() {
     done
 }
 
-auto_mode_out() {
-    # Re-enable GNOME keyboard management
-    if [ -x "$GSETTING" ]; then
-        $GSETTING set org.gnome.settings-daemon.plugins.keyboard active true 2>/dev/null || true
-    fi
-    log "Keyboard unplugged, restored GNOME settings"
-}
 
 # ============================================================================
 # Main
@@ -233,7 +226,6 @@ Commands:
 
 Internal (called by udev):
     in          Apply keyboard layouts
-    out         Restore settings
 
 Configuration:
     User config:   $CONFIG_FILE
@@ -243,31 +235,40 @@ EOF
 }
 
 main() {
-    # No args = launch GUI configurator or show usage
+    check_dependencies
+
+    # No args = apply layouts in background + launch GUI or show usage
     if [ $# -eq 0 ]; then
+        # Apply layouts in background
+        "$0" reload &
+
+        # Launch GUI if available, otherwise show usage
         local gui_script
         gui_script="$(dirname "$(readlink -f "$0")")/kbd-auto-layout-gui"
         if [ -x "$gui_script" ]; then
             exec "$gui_script"
-        else
-            usage
-            exit 0
         fi
+        usage
+        exit 0
     fi
-
-    check_dependencies
 
     case "$1" in
         in|apply|reload)
+            # Log session header
+            log "========== SESSION START =========="
+            if [ -t 0 ]; then
+                log "Source: terminal (command: $1)"
+            else
+                log "Source: udev/service (command: $1)"
+            fi
+
             # Use flock for proper locking
             exec 200>"$LOCK_FILE"
-            flock -n 200 || { log "Another instance running, exiting"; exit 0; }
+            flock -n 200 || { log "Another instance running, exiting"; log "========== SESSION END =========="; exit 0; }
 
             sleep 1  # Wait for device to fully initialize
             auto_mode_in
-            ;;
-        out)
-            auto_mode_out
+            log "========== SESSION END =========="
             ;;
         list|--list|-l)
             echo "Detected keyboards:"
