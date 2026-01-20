@@ -1,0 +1,22 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = linux
+Target = linux-lts
+Target = linux-zen
+Target = linux-hardened
+Target = dkms
+Target = *-dkms
+
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = File
+Target = usr/lib/modules/*/kernel/drivers/hid/*
+
+[Action]
+Description = Reapplying keyboard layouts after kernel/DKMS update...
+When = PostTransaction
+Exec = /usr/local/bin/kbd-auto-layout reload
+NeedsTargets

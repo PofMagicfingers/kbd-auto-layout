@@ -14,6 +14,7 @@
 - [x] Suppression du code dupliqué (triple setxkbmap → retry loop)
 - [x] Lock avec flock au lieu de pgrep
 - [x] Documentation CLAUDE.md
+- [x] Pacman hook for automatic reload after DKMS/kernel updates
 
 ## À faire
 

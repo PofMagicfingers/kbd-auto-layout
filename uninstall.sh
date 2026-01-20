@@ -5,6 +5,7 @@ set -e
 
 INSTALL_DIR="/usr/local/bin"
 UDEV_DIR="/etc/udev/rules.d"
+PACMAN_HOOKS_DIR="/etc/pacman.d/hooks"
 SYSTEM_CONFIG_DIR="/etc/kbd-auto-layout"
 LOG_FILE="/var/log/kbd-auto-layout.log"
 
@@ -37,6 +38,13 @@ remove_udev_rules() {
     info "Removing udev rules..."
 
     rm -f "$UDEV_DIR/99-kbd-auto-layout.rules"
+}
+
+remove_pacman_hook() {
+    if [ -f "$PACMAN_HOOKS_DIR/kbd-auto-layout.hook" ]; then
+        info "Removing pacman hook..."
+        rm -f "$PACMAN_HOOKS_DIR/kbd-auto-layout.hook"
+    fi
 }
 
 remove_system_config() {
@@ -78,6 +86,7 @@ main() {
 
     remove_scripts
     remove_udev_rules
+    remove_pacman_hook
     remove_system_config
     remove_autostart
     remove_log

@@ -19,6 +19,8 @@ kbd-auto-layout/
 │   └── keyboards.yaml    # Default keyboard configuration
 ├── udev/
 │   └── 99-kbd-auto-layout.rules  # udev rules for keyboard & module events
+├── pacman-hooks/
+│   └── kbd-auto-layout.hook  # Pacman hook for DKMS/kernel updates (Arch)
 ├── install.sh            # Installation script (requires root)
 └── uninstall.sh          # Uninstallation script (requires root)
 ```
@@ -48,11 +50,18 @@ kbd-auto-layout in           # Apply layouts (called by udev)
 kbd-auto-layout out          # Restore settings (called by udev)
 ```
 
-## udev Triggers
+## Automatic Triggers
 
-The script is triggered by udev on:
+The script is triggered automatically on:
+
+**udev events:**
 - USB keyboard plug/unplug (`SUBSYSTEM=="input"`)
 - HID module reload after DKMS rebuild (`SUBSYSTEM=="module"`, `KERNEL=="usbhid|hid_generic"`)
+
+**Pacman hook (Arch Linux):**
+- After kernel package updates (`linux`, `linux-lts`, `linux-zen`, etc.)
+- After DKMS package updates (`dkms`, `*-dkms`)
+- After HID driver updates (`usr/lib/modules/*/kernel/drivers/hid/*`)
 
 ## Dependencies
 
@@ -74,6 +83,7 @@ sudo ./install.sh
 This installs:
 - Scripts to `/usr/local/bin/`
 - udev rules to `/etc/udev/rules.d/`
+- Pacman hook to `/etc/pacman.d/hooks/` (Arch Linux only)
 - System config to `/etc/kbd-auto-layout/`
 - User config to `~/.config/kbd-auto-layout/`
 - Autostart entry to `~/.config/autostart/` (for GNOME/KDE/XFCE)

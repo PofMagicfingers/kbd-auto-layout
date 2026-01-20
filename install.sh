@@ -6,6 +6,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="/usr/local/bin"
 UDEV_DIR="/etc/udev/rules.d"
+PACMAN_HOOKS_DIR="/etc/pacman.d/hooks"
 SYSTEM_CONFIG_DIR="/etc/kbd-auto-layout"
 USER_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/kbd-auto-layout"
 LOG_FILE="/var/log/kbd-auto-layout.log"
@@ -42,6 +43,18 @@ install_udev_rules() {
     info "Installing udev rules to $UDEV_DIR..."
 
     install -m 644 "$SCRIPT_DIR/udev/99-kbd-auto-layout.rules" "$UDEV_DIR/"
+}
+
+install_pacman_hook() {
+    # Only on Arch-based systems
+    if [ ! -d "/etc/pacman.d" ]; then
+        return 0
+    fi
+
+    info "Installing pacman hook to $PACMAN_HOOKS_DIR..."
+
+    mkdir -p "$PACMAN_HOOKS_DIR"
+    install -m 644 "$SCRIPT_DIR/pacman-hooks/kbd-auto-layout.hook" "$PACMAN_HOOKS_DIR/"
 }
 
 install_config() {
@@ -223,6 +236,7 @@ show_summary() {
     echo "  - $INSTALL_DIR/kbd-auto-layout-udev"
     [ -f "$INSTALL_DIR/kbd-auto-layout-gui" ] && echo "  - $INSTALL_DIR/kbd-auto-layout-gui"
     echo "  - $UDEV_DIR/99-kbd-auto-layout.rules"
+    [ -f "$PACMAN_HOOKS_DIR/kbd-auto-layout.hook" ] && echo "  - $PACMAN_HOOKS_DIR/kbd-auto-layout.hook"
     echo "  - $SYSTEM_CONFIG_DIR/keyboards.yaml"
     echo "  - ~/.config/autostart/kbd-auto-layout.desktop"
     echo ""
@@ -245,6 +259,7 @@ main() {
 
     install_scripts
     install_udev_rules
+    install_pacman_hook
     install_config
     setup_user_config
     install_autostart
