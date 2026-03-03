@@ -146,7 +146,7 @@ apply_layout() {
     $was_correct && return 1 || return 0
 }
 
-send_notification() {
+send_notification_root() {
     local user="$1"
     local display="$2"
     local dbus="$3"
@@ -163,30 +163,105 @@ send_notification() {
     fi
 }
 
+send_notification_user() {
+    local message="$1"
+
+    local title="⌨️ kbd-auto-layout"
+    $DRY_RUN && title="[DRY RUN] $title"
+
+    if [ -x /usr/bin/notify-send ]; then
+        /usr/bin/notify-send "$title" "$message" 2>/dev/null || true
+    fi
+}
+
 # ============================================================================
-# Auto Mode (udev triggered)
+# Shared: load configured keyboards from config
 # ============================================================================
 
-auto_mode_in() {
+load_configured_keyboards() {
     local config
     config=$(get_config_file) || {
         log "No config file found, using defaults"
         config=""
     }
 
-    # Get configured keyboards
-    local configured_keyboards=()
+    CONFIGURED_KEYBOARDS=()
     if [ -n "$config" ]; then
         while IFS='|' read -r name layout variant model; do
-            configured_keyboards+=("$name|$layout|$variant|$model")
+            CONFIGURED_KEYBOARDS+=("$name|$layout|$variant|$model")
         done < <(parse_yaml_keyboards "$config")
     fi
 
     # Fallback to defaults if no config
-    if [ ${#configured_keyboards[@]} -eq 0 ]; then
-        configured_keyboards=("8BitDo|$DEFAULT_LAYOUT|$DEFAULT_VARIANT|$DEFAULT_MODEL")
-        configured_keyboards+=("Keychron|$DEFAULT_LAYOUT|$DEFAULT_VARIANT|$DEFAULT_MODEL")
+    if [ ${#CONFIGURED_KEYBOARDS[@]} -eq 0 ]; then
+        CONFIGURED_KEYBOARDS=("8BitDo|$DEFAULT_LAYOUT|$DEFAULT_VARIANT|$DEFAULT_MODEL")
+        CONFIGURED_KEYBOARDS+=("Keychron|$DEFAULT_LAYOUT|$DEFAULT_VARIANT|$DEFAULT_MODEL")
     fi
+}
+
+# ============================================================================
+# User mode (i3 exec, terminal, non-root)
+# ============================================================================
+
+wait_for_x11() {
+    local max_wait=30
+    local interval=2
+    local waited=0
+
+    while [ $waited -lt $max_wait ]; do
+        if $XINPUT list >/dev/null 2>&1; then
+            return 0
+        fi
+        log "Waiting for X11... (${waited}s)"
+        sleep $interval
+        waited=$((waited + interval))
+    done
+
+    error "X11 not ready after ${max_wait}s"
+    return 1
+}
+
+apply_layouts_user() {
+    local quiet="${1:-false}"
+
+    load_configured_keyboards
+
+    for kb_config in "${CONFIGURED_KEYBOARDS[@]}"; do
+        IFS='|' read -r kb_name kb_layout kb_variant kb_model <<< "$kb_config"
+
+        local keyboard_ids
+        keyboard_ids=$(get_keyboard_ids "$kb_name")
+
+        if [ -n "$keyboard_ids" ]; then
+            local layout_changed=false
+            for id in $keyboard_ids; do
+                if apply_layout "$id" "$kb_layout" "$kb_variant" "$kb_model" "$HOME"; then
+                    layout_changed=true
+                fi
+            done
+
+            if $layout_changed && [ "$quiet" = "false" ]; then
+                send_notification_user "Applied $kb_layout-$kb_variant to $kb_name"
+            fi
+
+            # Disable GNOME keyboard daemon interference
+            if [ -x "$GSETTING" ]; then
+                $GSETTING set org.gnome.settings-daemon.plugins.keyboard active false 2>/dev/null || true
+            fi
+
+            log "Configured $kb_name"
+        fi
+    done
+}
+
+# ============================================================================
+# Root mode (udev triggered)
+# ============================================================================
+
+apply_layouts_root() {
+    local quiet="${1:-false}"
+
+    load_configured_keyboards
 
     # Process each logged-in user
     local userlist
@@ -203,16 +278,16 @@ auto_mode_in() {
         export XAUTHORITY="$xauth"
         export DISPLAY="$display"
 
-        # Get DBUS session
+        # Get DBUS session (try i3, sway, xinit, gnome-session, plasma)
         local user_pid dbus_addr
-        user_pid=$(pgrep -u "$cur_user" -x "xinit\|gnome-session\|plasma" 2>/dev/null | head -1)
+        user_pid=$(pgrep -u "$cur_user" -x "i3\|sway\|xinit\|gnome-session\|plasma" 2>/dev/null | head -1)
         if [ -n "$user_pid" ]; then
             dbus_addr=$(grep -z DBUS_SESSION_BUS_ADDRESS "/proc/$user_pid/environ" 2>/dev/null | tr '\0' '\n' | head -1)
             export ${dbus_addr:-DBUS_SESSION_BUS_ADDRESS=}
         fi
 
         # Apply layouts for each configured keyboard
-        for kb_config in "${configured_keyboards[@]}"; do
+        for kb_config in "${CONFIGURED_KEYBOARDS[@]}"; do
             IFS='|' read -r kb_name kb_layout kb_variant kb_model <<< "$kb_config"
 
             local keyboard_ids
@@ -227,8 +302,8 @@ auto_mode_in() {
                 done
 
                 # Only notify if layout was actually changed
-                if $layout_changed; then
-                    send_notification "$cur_user" "$display" "$DBUS_SESSION_BUS_ADDRESS" \
+                if $layout_changed && [ "$quiet" = "false" ]; then
+                    send_notification_root "$cur_user" "$display" "$DBUS_SESSION_BUS_ADDRESS" \
                         "Applied $kb_layout-$kb_variant to $kb_name"
                 fi
 
@@ -304,24 +379,45 @@ main() {
             local prefix=""
             $DRY_RUN && prefix="[DRY RUN] "
             log "========== ${prefix}SESSION START =========="
-            if [ -t 0 ]; then
+
+            if [ "$EUID" -eq 0 ]; then
+                log "Source: root/udev (command: $1)"
+            elif [ -t 0 ]; then
                 log "Source: terminal (command: $1)"
             else
-                log "Source: udev/service (command: $1)"
+                log "Source: autostart (command: $1)"
             fi
 
             # Use flock for proper locking
             exec 200>"$LOCK_FILE"
             flock -n 200 || { log "Another instance running, exiting"; log "========== SESSION END =========="; exit 0; }
 
-            sleep 1  # Wait for device to fully initialize
-            auto_mode_in
+            if [ "$EUID" -eq 0 ]; then
+                # Root mode (udev): enumerate users, set up X11 env
+                sleep 1
+                apply_layouts_root
 
-            # If called by udev, wait and reapply if X11 reset layouts
-            if [ ! -t 0 ]; then
+                # Reapply after X11 settles
                 sleep 5
                 log "Checking layouts after X11 settle..."
-                auto_mode_in
+                apply_layouts_root true
+            else
+                # User mode (i3 exec, terminal): use inherited environment
+                wait_for_x11 || { log "========== SESSION END =========="; exit 1; }
+                sleep 1
+                apply_layouts_user
+
+                # Retry to catch layout resets (i3 startup, etc.)
+                # Only retry when not in a terminal (autostart context)
+                if [ ! -t 0 ]; then
+                    local retries=3
+                    local retry_interval=5
+                    for ((r=1; r<=retries; r++)); do
+                        sleep $retry_interval
+                        log "Recheck $r/$retries..."
+                        apply_layouts_user true
+                    done
+                fi
             fi
 
             log "========== ${prefix}SESSION END =========="

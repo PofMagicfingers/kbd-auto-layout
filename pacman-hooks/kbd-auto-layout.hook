@@ -18,5 +18,5 @@ Target = usr/lib/modules/*/kernel/drivers/hid/*
 [Action]
 Description = Reapplying keyboard layouts after kernel/DKMS update...
 When = PostTransaction
-Exec = /usr/local/bin/kbd-auto-layout reload
+Exec = /bin/sh -c '(sleep 10 && /usr/local/bin/kbd-auto-layout reload) &'
 NeedsTargets
