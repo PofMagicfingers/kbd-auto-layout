@@ -1,12 +1,13 @@
 #!/bin/sh
 # USB Keyboard udev wrapper
 # Called by udev rules, logs output and invokes main script
+#
+# IMPORTANT: The main script MUST run in the background (& + disown)
+# so that udev can finish processing the device. Otherwise the script
+# blocks udev and prevents the keyboard from fully initializing.
 
 LOG=/var/log/kbd-auto-layout.log
 SCRIPT=/usr/local/bin/kbd-auto-layout
-
-# Small delay to let device fully initialize
-sleep 0.5
 
 # Log the event
 {
@@ -15,9 +16,9 @@ sleep 0.5
     echo "SUBSYSTEM=$SUBSYSTEM ACTION=$ACTION KERNEL=$KERNEL"
 } >> "$LOG"
 
-# Run the main script
+# Run the main script in background to not block udev
 if [ -x "$SCRIPT" ]; then
-    "$SCRIPT" "$@" >> "$LOG" 2>&1
+    "$SCRIPT" "$@" >> "$LOG" 2>&1 &
 else
     echo "Error: $SCRIPT not found or not executable" >> "$LOG"
 fi

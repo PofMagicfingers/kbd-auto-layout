@@ -280,7 +280,7 @@ apply_layouts_root() {
 
         # Get DBUS session (try i3, sway, xinit, gnome-session, plasma)
         local user_pid dbus_addr
-        user_pid=$(pgrep -u "$cur_user" -x "i3\|sway\|xinit\|gnome-session\|plasma" 2>/dev/null | head -1)
+        user_pid=$(pgrep -u "$cur_user" -x "i3|sway|xinit|gnome-session|plasma" 2>/dev/null | head -1)
         if [ -n "$user_pid" ]; then
             dbus_addr=$(grep -z DBUS_SESSION_BUS_ADDRESS "/proc/$user_pid/environ" 2>/dev/null | tr '\0' '\n' | head -1)
             export ${dbus_addr:-DBUS_SESSION_BUS_ADDRESS=}
@@ -388,13 +388,18 @@ main() {
 
             if [ "$EUID" -eq 0 ]; then
                 # Root mode (udev): enumerate users, set up X11 env
-                sleep 1
+                # USB keyboards can take 10+ seconds to fully register as
+                # keyboard devices in X11 (they often appear as pointer first)
+                local retries=5
+                local retry_interval=3
+                sleep 2
                 apply_layouts_root
 
-                # Reapply after X11 settles
-                sleep 5
-                log "Checking layouts after X11 settle..."
-                apply_layouts_root true
+                for ((r=1; r<=retries; r++)); do
+                    sleep $retry_interval
+                    log "Recheck $r/$retries..."
+                    apply_layouts_root true
+                done
             else
                 # User mode: use inherited environment
                 wait_for_x11 || { log "========== SESSION END =========="; exit 1; }
