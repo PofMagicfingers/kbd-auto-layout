@@ -331,6 +331,7 @@ Commands:
     (none)      Apply layouts, then launch interactive configurator
     --no-apply  Launch configurator without applying layouts
     reload      Re-apply keyboard layouts (like a fresh plug-in)
+    startup     Apply layouts with retries (for i3/WM autostart)
     list        List detected keyboards
     help        Show this help
 
@@ -374,19 +375,12 @@ main() {
     fi
 
     case "$1" in
-        in|apply|reload)
+        in|apply|reload|startup)
             # Log session header
             local prefix=""
             $DRY_RUN && prefix="[DRY RUN] "
             log "========== ${prefix}SESSION START =========="
-
-            if [ "$EUID" -eq 0 ]; then
-                log "Source: root/udev (command: $1)"
-            elif [ -t 0 ]; then
-                log "Source: terminal (command: $1)"
-            else
-                log "Source: autostart (command: $1)"
-            fi
+            log "Source: $1 (EUID=$EUID)"
 
             # Use flock for proper locking
             exec 200>"$LOCK_FILE"
@@ -402,14 +396,13 @@ main() {
                 log "Checking layouts after X11 settle..."
                 apply_layouts_root true
             else
-                # User mode (i3 exec, terminal): use inherited environment
+                # User mode: use inherited environment
                 wait_for_x11 || { log "========== SESSION END =========="; exit 1; }
                 sleep 1
                 apply_layouts_user
 
-                # Retry to catch layout resets (i3 startup, etc.)
-                # Only retry when not in a terminal (autostart context)
-                if [ ! -t 0 ]; then
+                # startup = with retries (for i3/WM autostart)
+                if [ "$1" = "startup" ]; then
                     local retries=3
                     local retry_interval=5
                     for ((r=1; r<=retries; r++)); do

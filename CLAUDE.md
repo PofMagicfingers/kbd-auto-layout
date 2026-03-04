@@ -45,6 +45,7 @@ keyboards:
 ```bash
 kbd-auto-layout              # Launch interactive configurator (if gui installed)
 kbd-auto-layout reload       # Re-apply layouts (like a fresh plug-in)
+kbd-auto-layout startup      # Apply layouts with retries (for i3/WM autostart)
 kbd-auto-layout list         # List detected keyboards
 kbd-auto-layout in           # Apply layouts (called by udev)
 kbd-auto-layout out          # Restore settings (called by udev)
